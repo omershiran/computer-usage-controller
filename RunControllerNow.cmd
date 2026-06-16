@@ -1,2 +1,2 @@
 @echo off
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0UsageController.ps1"
+wscript.exe "%~dp0Launcher.vbs" "%~dp0UsageController.ps1"

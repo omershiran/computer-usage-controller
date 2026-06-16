@@ -21,24 +21,45 @@ New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "sessions") | O
 Copy-Item -LiteralPath (Join-Path $SourceDir "UsageController.ps1") -Destination $InstallDir -Force
 Copy-Item -LiteralPath (Join-Path $SourceDir "AdminDashboard.ps1") -Destination $InstallDir -Force
 Copy-Item -LiteralPath (Join-Path $SourceDir "Uninstall.ps1") -Destination $InstallDir -Force
+Copy-Item -LiteralPath (Join-Path $SourceDir "Launcher.vbs") -Destination $InstallDir -Force
 
 $controller = Join-Path $InstallDir "UsageController.ps1"
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$controller`""
+$launcher = Join-Path $InstallDir "Launcher.vbs"
+$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$launcher`" `"$controller`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn
-$principal = New-ScheduledTaskPrincipal -GroupId "Users" -RunLevel Highest
+$principal = New-ScheduledTaskPrincipal -GroupId "Users" -RunLevel LeastPrivilege
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "Shows the computer usage form and shuts down after the selected time." -Force | Out-Null
 
 $dashboard = Join-Path $InstallDir "AdminDashboard.ps1"
-$shortcutPath = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "ניהול שימוש במחשב.lnk"
-$shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = "powershell.exe"
-$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$dashboard`""
-$shortcut.WorkingDirectory = $InstallDir
-$shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,44"
-$shortcut.Save()
+
+function New-DashboardShortcut {
+    param([string]$DesktopPath)
+
+    if ([string]::IsNullOrWhiteSpace($DesktopPath)) { return }
+    if (-not (Test-Path -LiteralPath $DesktopPath)) { return }
+
+    $shortcutPath = Join-Path $DesktopPath "ניהול שימוש במחשב.lnk"
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = "wscript.exe"
+    $shortcut.Arguments = "`"$launcher`" `"$dashboard`""
+    $shortcut.WorkingDirectory = $InstallDir
+    $shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,44"
+    $shortcut.Save()
+}
+
+New-DashboardShortcut ([Environment]::GetFolderPath("CommonDesktopDirectory"))
+
+$usersRoot = Join-Path $env:SystemDrive "Users"
+if (Test-Path -LiteralPath $usersRoot) {
+    Get-ChildItem -LiteralPath $usersRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notin @("Default", "Default User", "All Users", "Public") } |
+        ForEach-Object {
+            New-DashboardShortcut (Join-Path $_.FullName "Desktop")
+        }
+}
 
 Write-Host "ההתקנה הסתיימה."
 Write-Host "הבקר יופעל בכל כניסה ל-Windows."
-Write-Host "ממשק הניהול נוסף לשולחן העבודה הציבורי."
+Write-Host "ממשק הניהול נוסף לשולחן העבודה."

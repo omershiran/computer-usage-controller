@@ -11,9 +11,25 @@ catch {
     Write-Host "לא נמצאה משימה מתוזמנת בשם $TaskName."
 }
 
-$shortcutPath = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "ניהול שימוש במחשב.lnk"
-if (Test-Path $shortcutPath) {
-    Remove-Item -LiteralPath $shortcutPath -Force
+function Remove-DashboardShortcut {
+    param([string]$DesktopPath)
+
+    if ([string]::IsNullOrWhiteSpace($DesktopPath)) { return }
+    $shortcutPath = Join-Path $DesktopPath "ניהול שימוש במחשב.lnk"
+    if (Test-Path -LiteralPath $shortcutPath) {
+        Remove-Item -LiteralPath $shortcutPath -Force
+    }
+}
+
+Remove-DashboardShortcut ([Environment]::GetFolderPath("CommonDesktopDirectory"))
+
+$usersRoot = Join-Path $env:SystemDrive "Users"
+if (Test-Path -LiteralPath $usersRoot) {
+    Get-ChildItem -LiteralPath $usersRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notin @("Default", "Default User", "All Users", "Public") } |
+        ForEach-Object {
+            Remove-DashboardShortcut (Join-Path $_.FullName "Desktop")
+        }
 }
 
 Write-Host "ההסרה הסתיימה. נתוני שימוש נשארו בתיקייה:"
