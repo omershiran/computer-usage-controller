@@ -64,7 +64,23 @@ function Write-JsonFile {
 }
 
 function Stop-PendingShutdown {
-    shutdown.exe /a 2>$null | Out-Null
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & shutdown.exe /a 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log "Cancelled a pending shutdown."
+        }
+        else {
+            Write-Log ("No pending shutdown to cancel or cancel failed: " + ($output -join " "))
+        }
+    }
+    catch {
+        Write-Log ("Ignoring shutdown abort error: " + $_.Exception.Message)
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 }
 
 function Start-ShutdownCountdown {
@@ -74,7 +90,12 @@ function Start-ShutdownCountdown {
     )
 
     Stop-PendingShutdown
-    shutdown.exe /s /t $Seconds /c $Comment | Out-Null
+    $output = & shutdown.exe /s /t $Seconds /c $Comment 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log ("Failed to schedule shutdown: " + ($output -join " "))
+        throw "Failed to schedule shutdown."
+    }
+    Write-Log ("Scheduled shutdown in {0} seconds." -f $Seconds)
 }
 
 function Show-HebrewMessage {
