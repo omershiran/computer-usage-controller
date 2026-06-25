@@ -7,6 +7,9 @@ $AppName = "ComputerUsageController"
 $DataDir = Join-Path $env:ProgramData $AppName
 $SessionsDir = Join-Path $DataDir "sessions"
 $UsersFile = Join-Path $DataDir "users.json"
+$InitialResponseTimeoutSeconds = 180
+$MessageTimeoutSeconds = 15
+$FormTimeoutSeconds = 120
 
 New-Item -ItemType Directory -Force -Path $SessionsDir | Out-Null
 
@@ -37,20 +40,72 @@ function Write-JsonFile {
     [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Stop-PendingShutdown {
+    shutdown.exe /a 2>$null | Out-Null
+}
+
+function Start-ShutdownCountdown {
+    param(
+        [int]$Seconds,
+        [string]$Comment
+    )
+
+    Stop-PendingShutdown
+    shutdown.exe /s /t $Seconds /c $Comment | Out-Null
+}
+
 function Show-HebrewMessage {
     param(
         [string]$Text,
         [string]$Title = "בקר שימוש במחשב",
-        [System.Windows.Forms.MessageBoxIcon]$Icon = [System.Windows.Forms.MessageBoxIcon]::Information
+        [System.Windows.Forms.MessageBoxIcon]$Icon = [System.Windows.Forms.MessageBoxIcon]::Information,
+        [int]$TimeoutSeconds = $MessageTimeoutSeconds
     )
-    [System.Windows.Forms.MessageBox]::Show(
-        $Text,
-        $Title,
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        $Icon,
-        [System.Windows.Forms.MessageBoxDefaultButton]::Button1,
-        [System.Windows.Forms.MessageBoxOptions]::RightAlign -bor [System.Windows.Forms.MessageBoxOptions]::RtlReading
-    ) | Out-Null
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = $Title
+    $form.Size = New-Object System.Drawing.Size(460, 180)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.RightToLeft = "Yes"
+    $form.RightToLeftLayout = $true
+    $form.TopMost = $true
+    $form.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = $Text
+    $label.Location = New-Object System.Drawing.Point(25, 22)
+    $label.Size = New-Object System.Drawing.Size(390, 64)
+    $label.TextAlign = [System.Drawing.ContentAlignment]::MiddleRight
+
+    $okButton = New-Object System.Windows.Forms.Button
+    $okButton.Location = New-Object System.Drawing.Point(327, 100)
+    $okButton.Size = New-Object System.Drawing.Size(88, 32)
+    $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $okButton.Text = "אישור"
+
+    $form.AcceptButton = $okButton
+    $form.Controls.AddRange(@($label, $okButton))
+
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = [Math]::Max(1, $TimeoutSeconds) * 1000
+    $timer.Add_Tick({
+        $timer.Stop()
+        $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $form.Close()
+    })
+
+    $form.Add_Shown({
+        $form.Activate()
+        $timer.Start()
+    })
+
+    [void]$form.ShowDialog()
+    $timer.Stop()
+    $timer.Dispose()
+    $form.Dispose()
 }
 
 function New-Label {
@@ -64,7 +119,10 @@ function New-Label {
 }
 
 function Show-UsageForm {
-    param([bool]$AfterNine)
+    param(
+        [bool]$AfterNine,
+        [int]$TimeoutSeconds = $FormTimeoutSeconds
+    )
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "רישום שימוש במחשב"
@@ -131,9 +189,25 @@ function Show-UsageForm {
         $notice, $okButton, $cancelButton
     ))
 
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = [Math]::Max(1, $TimeoutSeconds) * 1000
+    $timer.Add_Tick({
+        $timer.Stop()
+        $form.Tag = "TimedOut"
+        $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $form.Close()
+    })
+    $form.Add_Shown({ $timer.Start() })
+
     while ($true) {
+        $form.Tag = $null
+
         $result = $form.ShowDialog()
+        $timer.Stop()
+
         if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
+            $timer.Dispose()
+            $form.Dispose()
             return $null
         }
 
@@ -146,13 +220,19 @@ function Show-UsageForm {
             continue
         }
 
-        return [pscustomobject]@{
+        $entry = [pscustomobject]@{
             UserName = $nameBox.Text.Trim()
             Purpose = $purposeBox.Text.Trim()
             PlannedMinutes = [int]$minutesInput.Value
         }
+        $timer.Dispose()
+        $form.Dispose()
+        return $entry
     }
 }
+
+$startupShutdownComment = "לא אושרו פרטי שימוש במחשב בזמן."
+Start-ShutdownCountdown -Seconds $InitialResponseTimeoutSeconds -Comment $startupShutdownComment
 
 Show-HebrewMessage "שימוש מרובה במחשב אינו בריא , השתמש בו בתבונה"
 
@@ -165,7 +245,7 @@ if ($afterNine) {
 $entry = Show-UsageForm -AfterNine:$afterNine
 if ($null -eq $entry) {
     Show-HebrewMessage "לא הוזנו פרטי שימוש. המחשב יכובה בעוד דקה." "בקר שימוש במחשב" ([System.Windows.Forms.MessageBoxIcon]::Warning)
-    shutdown.exe /s /t 60 /c "לא הוזנו פרטי שימוש במחשב."
+    Start-ShutdownCountdown -Seconds 60 -Comment "לא הוזנו פרטי שימוש במחשב."
     exit
 }
 
@@ -175,6 +255,9 @@ if ($afterNine) {
 elseif ($entry.PlannedMinutes -gt 120) {
     $entry.PlannedMinutes = 120
 }
+
+$shutdownSeconds = [Math]::Max(60, $entry.PlannedMinutes * 60)
+Start-ShutdownCountdown -Seconds $shutdownSeconds -Comment "זמן השימוש שהוגדר הסתיים. המחשב יכובה."
 
 $sessionId = [guid]::NewGuid().ToString()
 $start = Get-Date
@@ -212,7 +295,7 @@ while ($true) {
         $session.ShutdownTriggeredUtc = (Get-Date).ToUniversalTime().ToString("o")
         $session.LastHeartbeatUtc = (Get-Date).ToUniversalTime().ToString("o")
         Write-JsonFile $sessionFile $session
-        shutdown.exe /s /t 60 /c "זמן השימוש שהוגדר הסתיים. המחשב יכובה."
+        Start-ShutdownCountdown -Seconds 60 -Comment "זמן השימוש שהוגדר הסתיים. המחשב יכובה."
         exit
     }
 
