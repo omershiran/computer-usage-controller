@@ -4,6 +4,7 @@ $AppName = "ComputerUsageController"
 $InstallDir = Join-Path $env:ProgramData $AppName
 $SourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TaskName = "Computer Usage Controller"
+$WScriptExe = Join-Path $env:SystemRoot "System32\wscript.exe"
 
 function Assert-Admin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -25,7 +26,7 @@ Copy-Item -LiteralPath (Join-Path $SourceDir "Launcher.vbs") -Destination $Insta
 
 $controller = Join-Path $InstallDir "UsageController.ps1"
 $launcher = Join-Path $InstallDir "Launcher.vbs"
-$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$launcher`" `"$controller`""
+$action = New-ScheduledTaskAction -Execute $WScriptExe -Argument "`"$launcher`" `"$controller`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $principal = New-ScheduledTaskPrincipal -GroupId "Users" -RunLevel LeastPrivilege
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
@@ -42,7 +43,7 @@ function New-DashboardShortcut {
     $shortcutPath = Join-Path $DesktopPath "ניהול שימוש במחשב.lnk"
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = "wscript.exe"
+    $shortcut.TargetPath = $WScriptExe
     $shortcut.Arguments = "`"$launcher`" `"$dashboard`""
     $shortcut.WorkingDirectory = $InstallDir
     $shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,44"

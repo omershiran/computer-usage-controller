@@ -7,11 +7,34 @@ $AppName = "ComputerUsageController"
 $DataDir = Join-Path $env:ProgramData $AppName
 $SessionsDir = Join-Path $DataDir "sessions"
 $UsersFile = Join-Path $DataDir "users.json"
-$InitialResponseTimeoutSeconds = 180
+$LogFile = Join-Path $DataDir "controller.log"
 $MessageTimeoutSeconds = 15
 $FormTimeoutSeconds = 120
 
+New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 New-Item -ItemType Directory -Force -Path $SessionsDir | Out-Null
+
+function Write-Log {
+    param([string]$Message)
+    $line = "{0} {1}" -f (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"), $Message
+    Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8
+}
+
+trap {
+    Write-Log ("Unhandled error: " + $_.Exception.Message)
+    try {
+        [System.Windows.Forms.MessageBox]::Show(
+            "אירעה שגיאה בהפעלת בקר השימוש. נא לבדוק את הקובץ controller.log בתיקיית ההתקנה.",
+            "בקר שימוש במחשב",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error,
+            [System.Windows.Forms.MessageBoxDefaultButton]::Button1,
+            [System.Windows.Forms.MessageBoxOptions]::RightAlign -bor [System.Windows.Forms.MessageBoxOptions]::RtlReading
+        ) | Out-Null
+    }
+    catch {}
+    exit 1
+}
 
 function ConvertTo-SafeFileName {
     param([string]$Text)
@@ -97,11 +120,7 @@ function Show-HebrewMessage {
         $form.Close()
     })
 
-    $form.Add_Shown({
-        $form.Activate()
-        $timer.Start()
-    })
-
+    $timer.Start()
     [void]$form.ShowDialog()
     $timer.Stop()
     $timer.Dispose()
@@ -197,11 +216,10 @@ function Show-UsageForm {
         $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
         $form.Close()
     })
-    $form.Add_Shown({ $timer.Start() })
-
     while ($true) {
         $form.Tag = $null
 
+        $timer.Start()
         $result = $form.ShowDialog()
         $timer.Stop()
 
@@ -231,9 +249,7 @@ function Show-UsageForm {
     }
 }
 
-$startupShutdownComment = "לא אושרו פרטי שימוש במחשב בזמן."
-Start-ShutdownCountdown -Seconds $InitialResponseTimeoutSeconds -Comment $startupShutdownComment
-
+Write-Log "Controller started."
 Show-HebrewMessage "שימוש מרובה במחשב אינו בריא , השתמש בו בתבונה"
 
 $now = Get-Date
